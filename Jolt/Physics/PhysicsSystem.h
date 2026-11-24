@@ -165,6 +165,8 @@ public:
 	void						SaveState(StateRecorder &inStream, EStateRecorderState inState = EStateRecorderState::All, const StateRecorderFilter *inFilter = nullptr) const;
 
 	/// Restoring state for replay. Returns false if failed.
+	/// The restore is atomic: if the stream does not contain the complete state (e.g. because it is truncated or corrupt),
+	/// false is returned and the physics system is left unmodified.
 	bool						RestoreState(StateRecorder &inStream, const StateRecorderFilter *inFilter = nullptr);
 
 	/// Saving state of a single body.

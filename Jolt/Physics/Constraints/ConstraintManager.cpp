@@ -247,6 +247,8 @@ bool ConstraintManager::RestoreState(StateRecorder &inStream)
 		// Read state of constraints
 		uint32 num_constraints = (uint32)mConstraints.size(); // Initialize to current value for validation
 		inStream.Read(num_constraints);
+		if (inStream.IsReadFailed())
+			return false;
 		if (num_constraints != mConstraints.size())
 		{
 			JPH_ASSERT(false, "Cannot handle adding/removing constraints");
@@ -256,12 +258,16 @@ bool ConstraintManager::RestoreState(StateRecorder &inStream)
 		{
 			uint32 constraint_index = c->mConstraintIndex;
 			inStream.Read(constraint_index);
+			if (inStream.IsReadFailed())
+				return false;
 			if (constraint_index != c->mConstraintIndex)
 			{
 				JPH_ASSERT(false, "Unexpected constraint index");
 				return false;
 			}
 			c->RestoreState(inStream);
+			if (inStream.IsReadFailed())
+				return false;
 		}
 	}
 	else
@@ -269,17 +275,23 @@ bool ConstraintManager::RestoreState(StateRecorder &inStream)
 		// Not validating, use more flexible reading, read number of constraints
 		uint32 num_constraints = 0;
 		inStream.Read(num_constraints);
+		if (inStream.IsReadFailed())
+			return false;
 
 		for (uint32 idx = 0; idx < num_constraints; ++idx)
 		{
 			uint32 constraint_index;
 			inStream.Read(constraint_index);
+			if (inStream.IsReadFailed())
+				return false;
 			if (mConstraints.size() <= constraint_index)
 			{
 				JPH_ASSERT(false, "Restoring state for non-existing constraint");
 				return false;
 			}
 			mConstraints[constraint_index]->RestoreState(inStream);
+			if (inStream.IsReadFailed())
+				return false;
 		}
 	}
 

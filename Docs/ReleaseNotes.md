@@ -18,6 +18,8 @@ For breaking API changes see [this document](https://github.com/jrouwe/JoltPhysi
 * `MotionProperties::SetMassProperties` replaced small but valid inertia tensors (all principal moments below about 1e-6 kg m^2) with the inertia of a sphere of radius 1 m. The degenerate inertia check is now relative to the mass of the body.
 * `TriangleShape` with a convex radius counted the convex radius twice in `ESupportMode::IncludeConvexRadius` and `ESupportMode::Default` mode, and ignored it in `ESupportMode::ExcludeConvexRadius` mode. This e.g. caused triangle vs plane collisions to report collisions too early with too large a penetration depth. The convex radius is now also scaled.
 * `RotatedTranslatedShape::CollideSoftBodyVertices` did not transform the scale before passing it to the inner shape, resulting in incorrect soft body collision when the shape was rotated and non-uniformly scaled.
+* `VehicleConstraint::SaveState` did not save the wheel steering angle, the number of steps between wheel collision tests (`SetNumStepsBetweenCollisionTestActive/Inactive`) or the gravity override (`OverrideGravity`), so a restored vehicle lost its steering pose, fell back to testing wheel contacts every step and reverted to the default gravity. These runtime properties are now part of the saved state and restored together with the rest of the vehicle.
+* `PhysicsSystem::RestoreState` is now atomic: when the state recorder contains a truncated or corrupt stream, the restore fails and the physics system is rolled back to its previous state instead of leaving partially restored bodies, contacts or constraints.
 
 ## v5.7.0
 

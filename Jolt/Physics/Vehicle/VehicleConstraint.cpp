@@ -647,10 +647,21 @@ void VehicleConstraint::SaveState(StateRecorder &inStream) const
 {
 	Constraint::SaveState(inStream);
 
+	// Save the gravity override. Overriding gravity drives the vehicle body's gravity factor to 0 (see OnStep),
+	// so save that factor as well to be able to restore it when the override is reset.
+	inStream.Write(mIsGravityOverridden);
+	inStream.Write(mGravityOverride);
+	inStream.Write(mBody->GetMotionProperties()->GetGravityFactor());
+
+	// Save the wheel collision test cadence and the step counter that determines which wheel is tested when
+	inStream.Write(mNumStepsBetweenCollisionTestActive);
+	inStream.Write(mNumStepsBetweenCollisionTestInactive);
+
 	mController->SaveState(inStream);
 
 	for (const Wheel *w : mWheels)
 	{
+		inStream.Write(w->mSteerAngle); // Steering pose, applied by the controller through Wheel::SetSteerAngle
 		inStream.Write(w->mAngularVelocity);
 		inStream.Write(w->mAngle);
 		inStream.Write(w->mContactBodyID); // Used by MotorcycleController::PreCollide
@@ -674,10 +685,21 @@ void VehicleConstraint::RestoreState(StateRecorder &inStream)
 {
 	Constraint::RestoreState(inStream);
 
+	inStream.Read(mIsGravityOverridden);
+	inStream.Read(mGravityOverride);
+	float gravity_factor;
+	inStream.Read(gravity_factor);
+	// Restore the gravity factor that was in effect when the state was saved (the override drives it to 0 in OnStep)
+	mBody->GetMotionProperties()->SetGravityFactor(gravity_factor);
+
+	inStream.Read(mNumStepsBetweenCollisionTestActive);
+	inStream.Read(mNumStepsBetweenCollisionTestInactive);
+
 	mController->RestoreState(inStream);
 
 	for (Wheel *w : mWheels)
 	{
+		inStream.Read(w->mSteerAngle);
 		inStream.Read(w->mAngularVelocity);
 		inStream.Read(w->mAngle);
 		inStream.Read(w->mContactBodyID);

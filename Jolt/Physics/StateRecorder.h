@@ -128,6 +128,11 @@ public:
 	void				SetIsLastPart(bool inIsLastPart)							{ mIsLastPart = inIsLastPart; }
 	bool				IsLastPart() const											{ return mIsLastPart; }
 
+	/// Returns true when an attempt has been made to read past the end of the stream or when there was an IO failure.
+	/// When this happens the stream did not contain (all of) the expected data, e.g. because it was truncated or corrupt.
+	/// Disambiguate through StreamIn as both StreamIn and StreamOut declare IsFailed.
+	bool				IsReadFailed() const										{ const StreamIn &stream = *this; return stream.IsEOF() || stream.IsFailed(); }
+
 private:
 	bool				mIsValidating = false;
 	bool				mIsLastPart = true;
