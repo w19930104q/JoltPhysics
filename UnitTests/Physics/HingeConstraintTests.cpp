@@ -6,6 +6,7 @@
 #include "PhysicsTestContext.h"
 #include <Jolt/Physics/Constraints/HingeConstraint.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/StateRecorderImpl.h>
 #include "Layers.h"
 
 TEST_SUITE("HingeConstraintTests")
@@ -80,5 +81,68 @@ TEST_SUITE("HingeConstraintTests")
 				CHECK_APPROX_EQUAL(actual_axis.GetZ(), 0);
 			}
 		}
+	}
+
+	// A state recorder that hands out garbage and flags itself as failed, used to test that a corrupt stream doesn't modify a constraint
+	class CorruptStateRecorder : public StateRecorder
+	{
+	public:
+		virtual void	WriteBytes(const void *, size_t) override						{ }
+		virtual void	ReadBytes(void *outData, size_t inNumBytes) override			{ memset(outData, 0xff, inNumBytes); mFailed = true; }
+		virtual bool	IsEOF() const override										{ return true; }
+		virtual bool	IsFailed() const override									{ return mFailed; }
+
+	private:
+		bool			mFailed = false;
+	};
+
+	// Test that the motor state, target, limits and friction of a hinge constraint survive a save/restore state cycle
+	TEST_CASE("TestHingeConstraintSaveRestoreState")
+	{
+		// Create a body and a hinge constraint
+		PhysicsTestContext context;
+		Body &body = context.CreateBody(new SphereShapeSettings(0.5f), RVec3::sZero(), Quat::sIdentity(), EMotionType::Dynamic, EMotionQuality::Discrete, Layers::MOVING, EActivation::Activate);
+		HingeConstraintSettings settings;
+		HingeConstraint &constraint = context.CreateConstraint<HingeConstraint>(Body::sFixedToWorld, body, settings);
+
+		// Configure the constraint
+		const float cLimitsMin = DegreesToRadians(-20.0f);
+		const float cLimitsMax = DegreesToRadians(40.0f);
+		const float cTargetAngle = DegreesToRadians(18.0f);
+		const float cMaxFrictionTorque = 3.0f;
+		constraint.SetLimits(cLimitsMin, cLimitsMax);
+		constraint.SetMotorState(EMotorState::Position);
+		constraint.SetTargetAngle(cTargetAngle);
+		constraint.SetMaxFrictionTorque(cMaxFrictionTorque);
+
+		// Save the state
+		StateRecorderImpl state;
+		constraint.SaveState(state);
+		state.Rewind();
+
+		// Change all settings (simulates a constraint that was recreated from its original settings)
+		constraint.SetLimits(DegreesToRadians(-90.0f), DegreesToRadians(90.0f));
+		constraint.SetMotorState(EMotorState::Off);
+		constraint.SetTargetAngle(0.0f);
+		constraint.SetMaxFrictionTorque(1.0f);
+
+		// Restore the state and check that all settings are back
+		constraint.RestoreState(state);
+		CHECK(constraint.GetMotorState() == EMotorState::Position);
+		CHECK_APPROX_EQUAL(constraint.GetTargetAngle(), cTargetAngle);
+		CHECK(constraint.HasLimits());
+		CHECK_APPROX_EQUAL(constraint.GetLimitsMin(), cLimitsMin);
+		CHECK_APPROX_EQUAL(constraint.GetLimitsMax(), cLimitsMax);
+		CHECK_APPROX_EQUAL(constraint.GetMaxFrictionTorque(), cMaxFrictionTorque);
+
+		// Restoring from a corrupt stream should not modify the constraint
+		CorruptStateRecorder corrupt;
+		constraint.RestoreState(corrupt);
+		CHECK(constraint.GetMotorState() == EMotorState::Position);
+		CHECK_APPROX_EQUAL(constraint.GetTargetAngle(), cTargetAngle);
+		CHECK(constraint.HasLimits());
+		CHECK_APPROX_EQUAL(constraint.GetLimitsMin(), cLimitsMin);
+		CHECK_APPROX_EQUAL(constraint.GetLimitsMax(), cLimitsMax);
+		CHECK_APPROX_EQUAL(constraint.GetMaxFrictionTorque(), cMaxFrictionTorque);
 	}
 }

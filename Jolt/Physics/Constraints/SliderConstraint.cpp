@@ -450,6 +450,9 @@ void SliderConstraint::SaveState(StateRecorder &inStream) const
 	inStream.Write(mMotorState);
 	inStream.Write(mTargetVelocity);
 	inStream.Write(mTargetPosition);
+	inStream.Write(mLimitsMin);
+	inStream.Write(mLimitsMax);
+	inStream.Write(mMaxFrictionForce);
 }
 
 void SliderConstraint::RestoreState(StateRecorder &inStream)
@@ -461,9 +464,30 @@ void SliderConstraint::RestoreState(StateRecorder &inStream)
 	mRotationConstraintPart.RestoreState(inStream);
 	mPositionLimitsConstraintPart.RestoreState(inStream);
 
-	inStream.Read(mMotorState);
-	inStream.Read(mTargetVelocity);
-	inStream.Read(mTargetPosition);
+	// Read into temporaries first so that a corrupt stream cannot leave the constraint in an invalid state
+	EMotorState motor_state = mMotorState;
+	float target_velocity = mTargetVelocity;
+	float target_position = mTargetPosition;
+	float limits_min = mLimitsMin;
+	float limits_max = mLimitsMax;
+	float max_friction_force = mMaxFrictionForce;
+	inStream.Read(motor_state);
+	inStream.Read(target_velocity);
+	inStream.Read(target_position);
+	inStream.Read(limits_min);
+	inStream.Read(limits_max);
+	inStream.Read(max_friction_force);
+	if (!static_cast<const StreamIn &>(inStream).IsFailed()
+		&& limits_min <= 0.0f
+		&& limits_max >= 0.0f
+		&& max_friction_force >= 0.0f)
+	{
+		mMotorState = motor_state;
+		mTargetVelocity = target_velocity;
+		mTargetPosition = target_position;
+		SetLimits(limits_min, limits_max);
+		SetMaxFrictionForce(max_friction_force);
+	}
 }
 
 Ref<ConstraintSettings> SliderConstraint::GetConstraintSettings() const

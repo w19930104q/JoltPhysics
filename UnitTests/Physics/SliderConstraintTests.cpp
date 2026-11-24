@@ -6,6 +6,8 @@
 #include "PhysicsTestContext.h"
 #include <Jolt/Physics/Constraints/SliderConstraint.h>
 #include <Jolt/Physics/Collision/GroupFilterTable.h>
+#include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/StateRecorderImpl.h>
 #include "Layers.h"
 #include "LoggingContactListener.h"
 
@@ -582,5 +584,70 @@ TEST_SUITE("SliderConstraintTests")
 						CHECK(island_index3 == MotionProperties::cInactiveIndex);
 					}
 				}
+	}
+
+	// A state recorder that hands out garbage and flags itself as failed, used to test that a corrupt stream doesn't modify a constraint
+	class CorruptStateRecorder : public StateRecorder
+	{
+	public:
+		virtual void	WriteBytes(const void *, size_t) override						{ }
+		virtual void	ReadBytes(void *outData, size_t inNumBytes) override			{ memset(outData, 0xff, inNumBytes); mFailed = true; }
+		virtual bool	IsEOF() const override										{ return true; }
+		virtual bool	IsFailed() const override									{ return mFailed; }
+
+	private:
+		bool			mFailed = false;
+	};
+
+	// Test that the motor state, target, limits and friction of a slider constraint survive a save/restore state cycle
+	TEST_CASE("TestSliderConstraintSaveRestoreState")
+	{
+		// Create a body and a slider constraint
+		PhysicsTestContext context;
+		Body &body = context.CreateBody(new SphereShapeSettings(0.5f), RVec3::sZero(), Quat::sIdentity(), EMotionType::Dynamic, EMotionQuality::Discrete, Layers::MOVING, EActivation::Activate);
+		SliderConstraintSettings settings;
+		settings.mAutoDetectPoint = true;
+		settings.SetSliderAxis(Vec3::sAxisX());
+		SliderConstraint &constraint = context.CreateConstraint<SliderConstraint>(Body::sFixedToWorld, body, settings);
+
+		// Configure the constraint
+		const float cLimitsMin = -0.4f;
+		const float cLimitsMax = 0.9f;
+		const float cTargetPosition = 0.5f;
+		const float cMaxFrictionForce = 7.0f;
+		constraint.SetLimits(cLimitsMin, cLimitsMax);
+		constraint.SetMotorState(EMotorState::Position);
+		constraint.SetTargetPosition(cTargetPosition);
+		constraint.SetMaxFrictionForce(cMaxFrictionForce);
+
+		// Save the state
+		StateRecorderImpl state;
+		constraint.SaveState(state);
+		state.Rewind();
+
+		// Change all settings (simulates a constraint that was recreated from its original settings)
+		constraint.SetLimits(-2.0f, 2.0f);
+		constraint.SetMotorState(EMotorState::Off);
+		constraint.SetTargetPosition(0.0f);
+		constraint.SetMaxFrictionForce(1.0f);
+
+		// Restore the state and check that all settings are back
+		constraint.RestoreState(state);
+		CHECK(constraint.GetMotorState() == EMotorState::Position);
+		CHECK_APPROX_EQUAL(constraint.GetTargetPosition(), cTargetPosition);
+		CHECK(constraint.HasLimits());
+		CHECK_APPROX_EQUAL(constraint.GetLimitsMin(), cLimitsMin);
+		CHECK_APPROX_EQUAL(constraint.GetLimitsMax(), cLimitsMax);
+		CHECK_APPROX_EQUAL(constraint.GetMaxFrictionForce(), cMaxFrictionForce);
+
+		// Restoring from a corrupt stream should not modify the constraint
+		CorruptStateRecorder corrupt;
+		constraint.RestoreState(corrupt);
+		CHECK(constraint.GetMotorState() == EMotorState::Position);
+		CHECK_APPROX_EQUAL(constraint.GetTargetPosition(), cTargetPosition);
+		CHECK(constraint.HasLimits());
+		CHECK_APPROX_EQUAL(constraint.GetLimitsMin(), cLimitsMin);
+		CHECK_APPROX_EQUAL(constraint.GetLimitsMax(), cLimitsMax);
+		CHECK_APPROX_EQUAL(constraint.GetMaxFrictionForce(), cMaxFrictionForce);
 	}
 }

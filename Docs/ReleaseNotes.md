@@ -6,6 +6,7 @@ For breaking API changes see [this document](https://github.com/jrouwe/JoltPhysi
 
 ### Bug fixes
 
+* `HingeConstraint` and `SliderConstraint` now save/restore their limits and friction (`SetLimits`, `SetMaxFrictionTorque`/`SetMaxFrictionForce`) in `SaveState`/`RestoreState`. Previously these reverted to the values the constraint was created with when restoring state. Note that this changes the `StateRecorder` binary format for these constraints, old saved states can no longer be restored. `RestoreState` now also validates the read values so that a corrupt stream cannot leave the constraint in an invalid state.
 * Floating point exceptions are now disabled while executing compute shaders on the CPU. GPUs don't raise FP exceptions and MSVC can vectorize the emulated shader code using SIMD lanes with uninitialized data, causing spurious FP exceptions (e.g. an overflow in `HairGridNormalize`).
 * `JobSystemThreadPool` could run out of jobs ("No jobs available!" assert) when its worker threads didn't get scheduled, e.g. when there were more worker threads than CPU cores available to the process. The assert is a trace now and the underlying issue has been fixed.
 * `ConvexHullShape::GetTrianglesNext` would not split faces into multiple batches when the number of triangles in a single face was bigger than `inMaxTrianglesRequested`. In this case it would return 0 which made the calling code think that all triangles were collected when they were not.

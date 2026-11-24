@@ -402,6 +402,9 @@ void HingeConstraint::SaveState(StateRecorder &inStream) const
 	inStream.Write(mMotorState);
 	inStream.Write(mTargetAngularVelocity);
 	inStream.Write(mTargetAngle);
+	inStream.Write(mLimitsMin);
+	inStream.Write(mLimitsMax);
+	inStream.Write(mMaxFrictionTorque);
 }
 
 void HingeConstraint::RestoreState(StateRecorder &inStream)
@@ -413,9 +416,30 @@ void HingeConstraint::RestoreState(StateRecorder &inStream)
 	mPointConstraintPart.RestoreState(inStream);
 	mRotationLimitsConstraintPart.RestoreState(inStream);
 
-	inStream.Read(mMotorState);
-	inStream.Read(mTargetAngularVelocity);
-	inStream.Read(mTargetAngle);
+	// Read into temporaries first so that a corrupt stream cannot leave the constraint in an invalid state
+	EMotorState motor_state = mMotorState;
+	float target_angular_velocity = mTargetAngularVelocity;
+	float target_angle = mTargetAngle;
+	float limits_min = mLimitsMin;
+	float limits_max = mLimitsMax;
+	float max_friction_torque = mMaxFrictionTorque;
+	inStream.Read(motor_state);
+	inStream.Read(target_angular_velocity);
+	inStream.Read(target_angle);
+	inStream.Read(limits_min);
+	inStream.Read(limits_max);
+	inStream.Read(max_friction_torque);
+	if (!static_cast<const StreamIn &>(inStream).IsFailed()
+		&& limits_min >= -JPH_PI && limits_min <= 0.0f
+		&& limits_max >= 0.0f && limits_max <= JPH_PI
+		&& max_friction_torque >= 0.0f)
+	{
+		mMotorState = motor_state;
+		mTargetAngularVelocity = target_angular_velocity;
+		mTargetAngle = target_angle;
+		SetLimits(limits_min, limits_max);
+		SetMaxFrictionTorque(max_friction_torque);
+	}
 }
 
 
