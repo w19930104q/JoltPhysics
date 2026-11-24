@@ -2341,6 +2341,96 @@ TEST_SUITE("PhysicsTests")
 		CHECK(final_state.IsEqual(verify2));
 	}
 
+	// Test that restoring a truncated (corrupt) state is rejected without changing the live world
+	TEST_CASE("TestRestoreTruncatedState")
+	{
+		PhysicsTestContext c;
+
+		// Create the ground so that the box will get into contact with it
+		c.CreateFloor();
+
+		// Create a dynamic box (world-r1 reproduction parameters)
+		BodyCreationSettings box_settings(new BoxShape(Vec3::sReplicate(0.5f)), RVec3(0, 5, 0), Quat::sIdentity(), EMotionType::Dynamic, Layers::MOVING);
+		box_settings.mLinearVelocity = Vec3(1, 2, -1);
+		box_settings.mFriction = 0.73f;
+		box_settings.mRestitution = 0.21f;
+		box_settings.mGravityFactor = 0.4f;
+		box_settings.mUserData = 4242;
+		BodyID box_id = c.GetBodyInterface().CreateAndAddBody(box_settings, EActivation::Activate);
+
+		BodyInterface &bi = c.GetBodyInterface();
+
+		// Save the state at the keyframe
+		StateRecorderImpl keyframe;
+		c.GetSystem()->SaveState(keyframe);
+		const std::string keyframe_data = keyframe.GetData();
+
+		// Simulate so that the box falls on the floor and the live state drifts away from the keyframe
+		c.Simulate(3.0f);
+		CHECK(bi.GetPosition(box_id) != RVec3(0, 5, 0));
+
+		// Restoring the full keyframe should bring the box back to the keyframe
+		CHECK(c.GetSystem()->RestoreState(keyframe));
+		CHECK(bi.GetPosition(box_id) == RVec3(0, 5, 0));
+		CHECK(bi.GetRotation(box_id) == Quat::sIdentity());
+		CHECK(bi.GetLinearVelocity(box_id) == Vec3(1, 2, -1));
+		CHECK(bi.GetAngularVelocity(box_id) == Vec3::sZero());
+		CHECK(bi.IsActive(box_id));
+
+		// The object key and collision response parameters are configuration and should not be lost
+		CHECK(bi.GetUserData(box_id) == 4242);
+		CHECK(bi.GetFriction(box_id) == 0.73f);
+		CHECK(bi.GetRestitution(box_id) == 0.21f);
+		CHECK(bi.GetGravityFactor(box_id) == 0.4f);
+
+		// Simulate again so that the box lands on the floor and we get a non-trivial live state (including contacts)
+		c.Simulate(3.0f);
+
+		// Remember the live state
+		const RVec3 live_pos = bi.GetPosition(box_id);
+		const Quat live_rot = bi.GetRotation(box_id);
+		const Vec3 live_vel = bi.GetLinearVelocity(box_id);
+		const Vec3 live_ang_vel = bi.GetAngularVelocity(box_id);
+		const bool live_active = bi.IsActive(box_id);
+		const Vec3 live_gravity = c.GetSystem()->GetGravity();
+		CHECK(live_pos != RVec3(0, 5, 0));
+
+		// Restoring a truncated keyframe should fail and leave the live world unmodified
+		for (float fraction : { 0.0f, 0.1f, 0.5f, 0.9f, 0.99f })
+		{
+			StateRecorderImpl truncated;
+			truncated.WriteBytes(keyframe_data.data(), size_t(fraction * keyframe_data.size()));
+
+			// The truncated checkpoint must be rejected ...
+			CHECK(!c.GetSystem()->RestoreState(truncated));
+
+			// ... without changing the live world
+			CHECK(bi.GetPosition(box_id) == live_pos);
+			CHECK(bi.GetRotation(box_id) == live_rot);
+			CHECK(bi.GetLinearVelocity(box_id) == live_vel);
+			CHECK(bi.GetAngularVelocity(box_id) == live_ang_vel);
+			CHECK(bi.IsActive(box_id) == live_active);
+			CHECK(c.GetSystem()->GetGravity() == live_gravity);
+
+			// The object key and collision response parameters should not be lost
+			CHECK(bi.GetUserData(box_id) == 4242);
+			CHECK(bi.GetFriction(box_id) == 0.73f);
+			CHECK(bi.GetRestitution(box_id) == 0.21f);
+			CHECK(bi.GetGravityFactor(box_id) == 0.4f);
+		}
+
+		// The system should still be in a consistent state, simulating should not change the resting box
+		c.Simulate(0.5f);
+		CHECK_APPROX_EQUAL(bi.GetPosition(box_id), live_pos, 1.0e-5f);
+
+		// Restoring the complete keyframe should still work
+		StateRecorderImpl complete;
+		complete.WriteBytes(keyframe_data.data(), keyframe_data.size());
+		CHECK(c.GetSystem()->RestoreState(complete));
+		CHECK(bi.GetPosition(box_id) == RVec3(0, 5, 0));
+		CHECK(bi.GetLinearVelocity(box_id) == Vec3(1, 2, -1));
+	}
+
 	// This tests that when switching UseManifoldReduction on/off we get the correct contact callbacks
 	TEST_CASE("TestSwitchUseManifoldReduction")
 	{

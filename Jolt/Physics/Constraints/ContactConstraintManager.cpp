@@ -561,6 +561,8 @@ bool ContactConstraintManager::ManifoldCache::RestoreState(const ManifoldCache &
 	if (inStream.IsValidating())
 		num_body_pairs = uint32(all_bp.size());
 	inStream.Read(num_body_pairs);
+	if (inStream.IsReadFailed())
+		return false;
 
 	// Read entire cache
 	for (uint32 i = 0; i < num_body_pairs; ++i)
@@ -570,6 +572,8 @@ bool ContactConstraintManager::ManifoldCache::RestoreState(const ManifoldCache &
 		if (inStream.IsValidating() && i < all_bp.size())
 			body_pair_key = all_bp[i]->GetKey();
 		inStream.Read(body_pair_key);
+		if (inStream.IsReadFailed())
+			return false;
 
 		// Check if we want to restore this contact
 		if (inFilter == nullptr || inFilter->ShouldRestoreContact(body_pair_key.mBodyA, body_pair_key.mBodyB))
@@ -600,6 +604,8 @@ bool ContactConstraintManager::ManifoldCache::RestoreState(const ManifoldCache &
 			if (inStream.IsValidating())
 				num_manifolds = uint32(all_m.size());
 			inStream.Read(num_manifolds);
+			if (inStream.IsReadFailed())
+				return false;
 
 			uint32 handle = ManifoldMap::cInvalidHandle;
 			for (uint32 j = 0; j < num_manifolds; ++j)
@@ -609,13 +615,16 @@ bool ContactConstraintManager::ManifoldCache::RestoreState(const ManifoldCache &
 				if (inStream.IsValidating() && j < all_m.size())
 					sub_shape_key = all_m[j]->GetKey();
 				inStream.Read(sub_shape_key);
-				uint64 sub_shape_key_hash = sub_shape_key.GetHash();
 
 				// Read amount of contact points
 				uint16 num_contact_points = 0;
 				if (inStream.IsValidating() && j < all_m.size())
 					num_contact_points = all_m[j]->GetValue().mNumContactPoints;
 				inStream.Read(num_contact_points);
+				if (inStream.IsReadFailed())
+					return false;
+
+				uint64 sub_shape_key_hash = sub_shape_key.GetHash();
 
 				// Read manifold
 				MKeyValue *m_kv = Create(contact_allocator, sub_shape_key, sub_shape_key_hash, num_contact_points);
@@ -648,12 +657,16 @@ bool ContactConstraintManager::ManifoldCache::RestoreState(const ManifoldCache &
 			bp.RestoreState(inStream);
 			uint32 num_manifolds = 0;
 			inStream.Read(num_manifolds);
+			if (inStream.IsReadFailed())
+				return false;
 			for (uint32 j = 0; j < num_manifolds; ++j)
 			{
 				SubShapeIDPair sub_shape_key;
 				inStream.Read(sub_shape_key);
 				uint16 num_contact_points;
 				inStream.Read(num_contact_points);
+				if (inStream.IsReadFailed())
+					return false;
 				CachedManifold cm;
 				cm.RestoreState(inStream);
 				for (uint32 k = 0; k < num_contact_points; ++k)
@@ -672,6 +685,8 @@ bool ContactConstraintManager::ManifoldCache::RestoreState(const ManifoldCache &
 	if (inStream.IsValidating())
 		num_manifolds = uint32(all_m.size());
 	inStream.Read(num_manifolds);
+	if (inStream.IsReadFailed())
+		return false;
 
 	for (uint32 j = 0; j < num_manifolds; ++j)
 	{
@@ -680,6 +695,8 @@ bool ContactConstraintManager::ManifoldCache::RestoreState(const ManifoldCache &
 		if (inStream.IsValidating() && j < all_m.size())
 			sub_shape_key = all_m[j]->GetKey();
 		inStream.Read(sub_shape_key);
+		if (inStream.IsReadFailed())
+			return false;
 
 		// Check if we want to restore this contact
 		if (inFilter == nullptr || inFilter->ShouldRestoreContact(sub_shape_key.GetBody1ID(), sub_shape_key.GetBody2ID()))

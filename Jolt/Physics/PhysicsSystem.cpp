@@ -8,6 +8,7 @@
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsUpdateContext.h>
 #include <Jolt/Physics/PhysicsStepListener.h>
+#include <Jolt/Physics/StateRecorderImpl.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseBruteForce.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseQuadTree.h>
 #include <Jolt/Physics/Collision/CollisionDispatch.h>
@@ -2895,39 +2896,68 @@ bool PhysicsSystem::RestoreState(StateRecorder &inStream, const StateRecorderFil
 	EStateRecorderState state = EStateRecorderState::All; // Set this value for validation. If a partial state is saved, validation will not work anyway.
 	inStream.Read(state);
 
-	if (uint8(state) & uint8(EStateRecorderState::Global))
-	{
-		inStream.Read(mPreviousStepDeltaTime);
-		inStream.Read(mGravity);
-	}
+	// If the stream doesn't even contain the state to restore, it is corrupt. We haven't modified anything yet, so we can bail out.
+	if (inStream.IsReadFailed())
+		return false;
 
-	if (uint8(state) & uint8(EStateRecorderState::Bodies))
-	{
-		if (!mBodyManager.RestoreState(inStream))
-			return false;
+	// Save the current state so that we can roll back to it when the state in the stream turns out to be incomplete or corrupt.
+	// This makes restoring atomic: either the entire state is applied or the system is left unmodified.
+	StateRecorderImpl rollback;
+	SaveState(rollback, state, inFilter);
 
-		// Update bounding boxes for all bodies in the broadphase
-		if (inStream.IsLastPart())
+	// Restores the state from a stream, returns false if the stream did not contain the complete state
+	auto restore_state = [this, state, inFilter](StateRecorder &ioStream)
 		{
-			Array<BodyID> bodies;
-			for (const Body *b : mBodyManager.GetBodies())
-				if (BodyManager::sIsValidBodyPointer(b) && b->IsInBroadPhase())
-					bodies.push_back(b->GetID());
-			if (!bodies.empty())
-				mBroadPhase->NotifyBodiesAABBChanged(&bodies[0], (int)bodies.size());
-		}
-	}
+			if (uint8(state) & uint8(EStateRecorderState::Global))
+			{
+				ioStream.Read(mPreviousStepDeltaTime);
+				ioStream.Read(mGravity);
+			}
 
-	if (uint8(state) & uint8(EStateRecorderState::Contacts))
-	{
-		if (!mContactManager.RestoreState(inStream, inFilter))
-			return false;
-	}
+			if (uint8(state) & uint8(EStateRecorderState::Bodies))
+			{
+				if (!mBodyManager.RestoreState(ioStream))
+					return false;
 
-	if (uint8(state) & uint8(EStateRecorderState::Constraints))
+				// Update bounding boxes for all bodies in the broadphase
+				if (ioStream.IsLastPart())
+				{
+					Array<BodyID> bodies;
+					for (const Body *b : mBodyManager.GetBodies())
+						if (BodyManager::sIsValidBodyPointer(b) && b->IsInBroadPhase())
+							bodies.push_back(b->GetID());
+					if (!bodies.empty())
+						mBroadPhase->NotifyBodiesAABBChanged(&bodies[0], (int)bodies.size());
+				}
+			}
+
+			if (uint8(state) & uint8(EStateRecorderState::Contacts))
+			{
+				if (!mContactManager.RestoreState(ioStream, inFilter))
+					return false;
+			}
+
+			if (uint8(state) & uint8(EStateRecorderState::Constraints))
+			{
+				if (!mConstraintManager.RestoreState(ioStream))
+					return false;
+			}
+
+			// A truncated stream may not have triggered an explicit failure above (reads past the end can silently
+			// leave (parts of) the state unmodified), so explicitly check if we were able to read everything.
+			return !ioStream.IsReadFailed();
+		};
+
+	if (!restore_state(inStream))
 	{
-		if (!mConstraintManager.RestoreState(inStream))
-			return false;
+		// The state in the stream was incomplete or corrupt, roll back to the original state so that the system is left unmodified
+		rollback.Rewind();
+		EStateRecorderState rollback_state = EStateRecorderState::None;
+		rollback.Read(rollback_state);
+		JPH_ASSERT(rollback_state == state);
+		JPH_IF_ENABLE_ASSERTS(bool rollback_success =) restore_state(rollback);
+		JPH_ASSERT(rollback_success);
+		return false;
 	}
 
 	return true;

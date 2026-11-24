@@ -784,12 +784,24 @@ bool BodyManager::RestoreState(StateRecorder &inStream)
 			// Not validating, we can be a bit more loose, read number of bodies
 			uint32 num_bodies = 0;
 			inStream.Read(num_bodies);
+			if (inStream.IsReadFailed())
+			{
+				UnlockAllBodies();
+				return false;
+			}
 
 			// Iterate over the stored bodies and restore their state
 			for (uint32 idx = 0; idx < num_bodies; ++idx)
 			{
 				BodyID body_id;
 				inStream.Read(body_id);
+				bool is_active;
+				inStream.Read(is_active);
+				if (inStream.IsReadFailed())
+				{
+					UnlockAllBodies();
+					return false;
+				}
 				Body *b = TryGetBody(body_id);
 				if (b == nullptr)
 				{
@@ -797,8 +809,6 @@ bool BodyManager::RestoreState(StateRecorder &inStream)
 					UnlockAllBodies();
 					return false;
 				}
-				bool is_active;
-				inStream.Read(is_active);
 				if (is_active != b->IsActive())
 				{
 					if (is_active)
@@ -807,6 +817,11 @@ bool BodyManager::RestoreState(StateRecorder &inStream)
 						bodies_to_deactivate.push_back(body_id);
 				}
 				b->RestoreState(inStream);
+				if (inStream.IsReadFailed())
+				{
+					UnlockAllBodies();
+					return false;
+				}
 			}
 		}
 
