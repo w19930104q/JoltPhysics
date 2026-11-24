@@ -876,6 +876,184 @@ TEST_SUITE("SoftBodyTests")
 		CHECK(expected == actual);
 	}
 
+	// Test that the runtime solver parameters are saved and restored together with the vertex state
+	TEST_CASE("TestSoftBodySaveRestoreRuntimeParameters")
+	{
+		PhysicsTestContext c;
+		BodyInterface &bi = c.GetBodyInterface();
+
+		Ref<SoftBodySharedSettings> settings = sCreateSettingsWithAllConstraintTypes();
+		SoftBodyCreationSettings sb_settings(settings, RVec3::sZero(), Quat::sIdentity(), Layers::MOVING);
+		sb_settings.mAllowSleeping = false;
+		Body &body = *bi.CreateSoftBody(sb_settings);
+		bi.AddBody(body.GetID(), EActivation::Activate);
+
+		SoftBodyMotionProperties *mp = static_cast<SoftBodyMotionProperties *>(body.GetMotionProperties());
+
+		// Change all runtime solver parameters to values different from the creation settings
+		mp->SetNumIterations(17);
+		mp->SetPressure(410.0f);
+		mp->SetFacesDoubleSided(true);
+		mp->SetVertexRadius(0.015f);
+		mp->SetUpdatePosition(false);
+		mp->SetEnableSkinConstraints(false);
+		mp->SetSkinnedMaxDistanceMultiplier(2.5f);
+
+		// Simulate a bit so that the vertex state differs from the initial state
+		c.SimulateSingleStep();
+		c.SimulateSingleStep();
+
+		// Save the state
+		StateRecorderImpl state;
+		c.GetSystem()->SaveState(state);
+
+		// Change the runtime parameters again and move the vertices by simulating further
+		mp->SetNumIterations(3);
+		mp->SetPressure(1.0f);
+		mp->SetFacesDoubleSided(false);
+		mp->SetVertexRadius(0.0f);
+		mp->SetUpdatePosition(true);
+		mp->SetEnableSkinConstraints(true);
+		mp->SetSkinnedMaxDistanceMultiplier(1.0f);
+		c.SimulateSingleStep();
+
+		// Restore the state, both the vertex state and the runtime parameters should be back
+		state.Rewind();
+		CHECK(c.GetSystem()->RestoreState(state));
+
+		CHECK(mp->GetNumIterations() == 17);
+		CHECK(mp->GetPressure() == 410.0f);
+		CHECK(mp->GetFacesDoubleSided() == true);
+		CHECK(mp->GetVertexRadius() == 0.015f);
+		CHECK(mp->GetUpdatePosition() == false);
+		CHECK(mp->GetEnableSkinConstraints() == false);
+		CHECK(mp->GetSkinnedMaxDistanceMultiplier() == 2.5f);
+
+		// Simulating after the restore should produce the same result as simulating from the saved state
+		StateRecorderImpl verify_state;
+		c.GetSystem()->SaveState(verify_state);
+		state.Rewind();
+		CHECK(c.GetSystem()->RestoreState(state));
+		StateRecorderImpl verify_state_2;
+		c.GetSystem()->SaveState(verify_state_2);
+		CHECK(verify_state.IsEqual(verify_state_2));
+	}
+
+	// Test that restoring a truncated snapshot does not modify any state, in particular the vertices
+	TEST_CASE("TestSoftBodyRestoreTruncatedState")
+	{
+		// State recorder that serves a truncated copy of a recorded state
+		class TruncatedStateRecorder : public StateRecorder
+		{
+		public:
+			explicit				TruncatedStateRecorder(std::string inData) : mStream(std::move(inData)) { }
+
+			virtual void			WriteBytes(const void *inData, size_t inNumBytes) override
+			{
+				mStream.write(static_cast<const char *>(inData), inNumBytes);
+			}
+
+			virtual void			ReadBytes(void *outData, size_t inNumBytes) override
+			{
+				mStream.read(static_cast<char *>(outData), inNumBytes);
+			}
+
+			virtual bool			IsEOF() const override							{ return mStream.eof(); }
+			virtual bool			IsFailed() const override						{ return mStream.fail(); }
+
+		private:
+			std::stringstream		mStream;
+		};
+
+		PhysicsTestContext c;
+		BodyInterface &bi = c.GetBodyInterface();
+
+		Ref<SoftBodySharedSettings> settings = sCreateSettingsWithAllConstraintTypes();
+		SoftBodyCreationSettings sb_settings(settings, RVec3::sZero(), Quat::sIdentity(), Layers::MOVING);
+		sb_settings.mAllowSleeping = false;
+		Body &body = *bi.CreateSoftBody(sb_settings);
+		bi.AddBody(body.GetID(), EActivation::Activate);
+
+		SoftBodyMotionProperties *mp = static_cast<SoftBodyMotionProperties *>(body.GetMotionProperties());
+		mp->SetNumIterations(17);
+		mp->SetPressure(410.0f);
+		mp->SetFacesDoubleSided(true);
+		mp->SetVertexRadius(0.015f);
+
+		// Simulate a bit and record the soft body state directly (soft body level stream, no system header)
+		for (int i = 0; i < 5; ++i)
+			c.SimulateSingleStep();
+		StateRecorderImpl state;
+		mp->SaveState(state);
+
+		// Perturb the body so that its current state differs from the recorded state: simulate
+		// further to move the vertices and change the runtime solver parameters
+		for (int i = 0; i < 5; ++i)
+			c.SimulateSingleStep();
+		mp->SetNumIterations(3);
+		mp->SetPressure(1.0f);
+		mp->SetFacesDoubleSided(false);
+		mp->SetVertexRadius(0.0f);
+
+		// Snapshot of all soft body state that must remain untouched by a failed restore
+		struct Snapshot
+		{
+			Array<Vec3>			mVertexPositions;
+			Array<Vec3>			mVertexVelocities;
+			uint32				mNumIterations;
+			float				mPressure;
+			bool				mFacesDoubleSided;
+			float				mVertexRadius;
+			AABox				mLocalBounds;
+		};
+
+		auto take_snapshot = [&mp]() {
+			Snapshot s;
+			for (const SoftBodyVertex &v : mp->GetVertices())
+			{
+				s.mVertexPositions.push_back(v.mPosition);
+				s.mVertexVelocities.push_back(v.mVelocity);
+			}
+			s.mNumIterations = mp->GetNumIterations();
+			s.mPressure = mp->GetPressure();
+			s.mFacesDoubleSided = mp->GetFacesDoubleSided();
+			s.mVertexRadius = mp->GetVertexRadius();
+			s.mLocalBounds = mp->GetLocalBounds();
+			return s;
+		};
+
+		const std::string data = state.GetData();
+
+		// Try restoring at multiple truncation points, including truncation inside the vertex
+		// data and inside the runtime solver parameters at the end of the stream. None of these
+		// may modify the current (perturbed) state.
+		const size_t truncation_points[] = { 0, 1, data.size() / 4, data.size() / 2, data.size() - 1 };
+		for (size_t truncated_size : truncation_points)
+		{
+			Snapshot before = take_snapshot();
+
+			TruncatedStateRecorder truncated(data.substr(0, truncated_size));
+			mp->RestoreState(truncated);
+
+			Snapshot after = take_snapshot();
+			CHECK(after.mVertexPositions == before.mVertexPositions);
+			CHECK(after.mVertexVelocities == before.mVertexVelocities);
+			CHECK(after.mNumIterations == before.mNumIterations);
+			CHECK(after.mPressure == before.mPressure);
+			CHECK(after.mFacesDoubleSided == before.mFacesDoubleSided);
+			CHECK(after.mVertexRadius == before.mVertexRadius);
+			CHECK(after.mLocalBounds == before.mLocalBounds);
+		}
+
+		// The complete stream still restores correctly
+		state.Rewind();
+		mp->RestoreState(state);
+		CHECK(mp->GetNumIterations() == 17);
+		CHECK(mp->GetPressure() == 410.0f);
+		CHECK(mp->GetFacesDoubleSided() == true);
+		CHECK(mp->GetVertexRadius() == 0.015f);
+	}
+
 	// Test updating a soft body that is not part of the physics system
 	TEST_CASE("TestCustomUpdate")
 	{

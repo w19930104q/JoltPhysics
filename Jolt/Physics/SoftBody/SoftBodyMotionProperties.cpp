@@ -1470,35 +1470,93 @@ void SoftBodyMotionProperties::SaveState(StateRecorder &inStream) const
 	inStream.Write(mLocalBounds.mMax);
 	inStream.Write(mLocalPredictedBounds.mMin);
 	inStream.Write(mLocalPredictedBounds.mMax);
+
+	// Runtime solver parameters that can be changed through the setters
+	inStream.Write(mNumIterations);
+	inStream.Write(mPressure);
+	inStream.Write(mUpdatePosition);
+	inStream.Write(mFacesDoubleSided);
+	inStream.Write(mVertexRadius);
+	inStream.Write(mEnableSkinConstraints);
+	inStream.Write(mSkinnedMaxDistanceMultiplier);
 }
 
 void SoftBodyMotionProperties::RestoreState(StateRecorder &inStream)
 {
+	// Restore the base class state (linear/angular velocity, force, torque and sleep state)
 	MotionProperties::RestoreState(inStream);
 
-	for (Vertex &v : mVertices)
+	// Read every soft body value into temporary storage first and only commit it to the
+	// members once all reads succeeded. This ensures that a truncated stream does not modify
+	// any soft body state (in particular the vertex positions remain untouched).
+	Array<Vertex> vertices = mVertices;
+	for (Vertex &v : vertices)
 	{
 		inStream.Read(v.mPosition);
 		inStream.Read(v.mVelocity);
 	}
 
-	for (RodState &r : mRodStates)
+	Array<RodState> rod_states = mRodStates;
+	for (RodState &r : rod_states)
 	{
 		inStream.Read(r.mRotation);
 		inStream.Read(r.mAngularVelocity);
 	}
 
-	for (SkinState &s : mSkinState)
+	Array<SkinState> skin_state = mSkinState;
+	for (SkinState &s : skin_state)
 	{
 		inStream.Read(s.mPreviousPosition);
 		inStream.Read(s.mPosition);
 		inStream.Read(s.mNormal);
 	}
 
-	inStream.Read(mLocalBounds.mMin);
-	inStream.Read(mLocalBounds.mMax);
-	inStream.Read(mLocalPredictedBounds.mMin);
-	inStream.Read(mLocalPredictedBounds.mMax);
+	Vec3 local_bounds_min = mLocalBounds.mMin;
+	Vec3 local_bounds_max = mLocalBounds.mMax;
+	Vec3 local_predicted_bounds_min = mLocalPredictedBounds.mMin;
+	Vec3 local_predicted_bounds_max = mLocalPredictedBounds.mMax;
+	inStream.Read(local_bounds_min);
+	inStream.Read(local_bounds_max);
+	inStream.Read(local_predicted_bounds_min);
+	inStream.Read(local_predicted_bounds_max);
+
+	// Runtime solver parameters
+	uint32 num_iterations = mNumIterations;
+	float pressure = mPressure;
+	bool update_position = mUpdatePosition;
+	bool faces_double_sided = mFacesDoubleSided;
+	float vertex_radius = mVertexRadius;
+	bool enable_skin_constraints = mEnableSkinConstraints;
+	float skinned_max_distance_multiplier = mSkinnedMaxDistanceMultiplier;
+
+	inStream.Read(num_iterations);
+	inStream.Read(pressure);
+	inStream.Read(update_position);
+	inStream.Read(faces_double_sided);
+	inStream.Read(vertex_radius);
+	inStream.Read(enable_skin_constraints);
+	inStream.Read(skinned_max_distance_multiplier);
+
+	// The stream was truncated or otherwise failed: leave all soft body state (including the vertices) unchanged
+	StreamIn &read_stream = inStream;
+	if (read_stream.IsEOF() || read_stream.IsFailed())
+		return;
+
+	// Commit the soft body state
+	mVertices.swap(vertices);
+	mRodStates.swap(rod_states);
+	mSkinState.swap(skin_state);
+	mLocalBounds = AABox(local_bounds_min, local_bounds_max);
+	mLocalPredictedBounds = AABox(local_predicted_bounds_min, local_predicted_bounds_max);
+
+	// Commit the runtime solver parameters
+	mNumIterations = num_iterations;
+	mPressure = pressure;
+	mUpdatePosition = update_position;
+	mFacesDoubleSided = faces_double_sided;
+	mVertexRadius = vertex_radius;
+	mEnableSkinConstraints = enable_skin_constraints;
+	mSkinnedMaxDistanceMultiplier = skinned_max_distance_multiplier;
 }
 
 JPH_NAMESPACE_END

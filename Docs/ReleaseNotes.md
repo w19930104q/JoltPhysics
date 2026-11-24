@@ -18,6 +18,7 @@ For breaking API changes see [this document](https://github.com/jrouwe/JoltPhysi
 * `MotionProperties::SetMassProperties` replaced small but valid inertia tensors (all principal moments below about 1e-6 kg m^2) with the inertia of a sphere of radius 1 m. The degenerate inertia check is now relative to the mass of the body.
 * `TriangleShape` with a convex radius counted the convex radius twice in `ESupportMode::IncludeConvexRadius` and `ESupportMode::Default` mode, and ignored it in `ESupportMode::ExcludeConvexRadius` mode. This e.g. caused triangle vs plane collisions to report collisions too early with too large a penetration depth. The convex radius is now also scaled.
 * `RotatedTranslatedShape::CollideSoftBodyVertices` did not transform the scale before passing it to the inner shape, resulting in incorrect soft body collision when the shape was rotated and non-uniformly scaled.
+* `SoftBodyMotionProperties::SaveState` did not save the runtime solver parameters (`mNumIterations`, `mPressure`, `mUpdatePosition`, `mFacesDoubleSided`, `mVertexRadius`, `mEnableSkinConstraints` and `mSkinnedMaxDistanceMultiplier`), so changes made through the setters were lost after a `RestoreState` call. They are now saved and restored together with the vertex state. Restoring from a truncated or otherwise failed stream also no longer partially overwrites the soft body state; the vertex state and other soft body values are left untouched in that case.
 
 ## v5.7.0
 
